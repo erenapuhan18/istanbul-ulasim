@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>İstanbul Canlı Ulaşım Haritası</title>
+<meta name="description" content="İstanbul metro, tramvay, Marmaray, metrobüs ve vapurları tek haritada: araçlar nerede, bir sonraki sefer ne zaman.">
+<meta name="theme-color" content="#0b0f17">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🚇</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Overpass:wght@400;600;800&family=Doto:wght@700;900&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<div id="map" aria-label="İstanbul ulaşım haritası"></div>
+
+<header class="brand" id="brand">
+  <div class="brand-title">
+    <span class="brand-dot" aria-hidden="true"></span>
+    <div>
+      <h1>İSTANBUL <em>CANLI ULAŞIM</em></h1>
+      <p id="brandSub">bağlanıyor…</p>
+    </div>
+  </div>
+  <div class="brand-clock" id="clock" aria-live="off">--:--:--</div>
+</header>
+
+<div class="mapctl">
+  <button id="modeBtn" aria-pressed="false">ŞEMATİK GÖRÜNÜM</button>
+  <button id="statsBtn">AĞ İSTATİSTİKLERİ</button>
+</div>
+
+<div class="yearhud" id="yearhud" hidden></div>
+<section class="stats" id="stats" hidden aria-label="Ağ istatistikleri"></section>
+
+<button class="panel-toggle" id="panelToggle" aria-label="Hat panelini aç/kapat">HATLAR</button>
+
+<aside class="panel" id="panel">
+  <div class="search-wrap">
+    <input id="search" type="search" placeholder="İstasyon ara… (ör. Yenikapı)" autocomplete="off" spellcheck="false" aria-label="İstasyon ara">
+    <div class="search-results" id="searchResults" hidden></div>
+  </div>
+  <div class="groups" id="groups"></div>
+  <div class="alerts" id="alerts"></div>
+  <div class="linecard" id="linecard" hidden></div>
+  <footer class="panel-foot">
+    <p><strong>Araç konumları tarifeye göre tahminidir</strong> — GPS canlı takip verisi değildir.</p>
+    <p>Veri: <a href="https://data.ibb.gov.tr" target="_blank" rel="noopener">İBB Açık Veri</a> + Metro İstanbul API · Sefer saatleri canlı çekilir.</p>
+  </footer>
+</aside>
+
+<section class="board" id="board" hidden aria-live="polite">
+  <div class="board-head">
+    <div class="board-station">
+      <span class="board-led-dot" aria-hidden="true"></span>
+      <h2 id="boardName">—</h2>
+    </div>
+    <button class="board-close" id="boardClose" aria-label="Panoyu kapat">✕</button>
+  </div>
+  <div class="board-amen" id="boardAmen" hidden></div>
+  <div class="board-rows" id="boardRows"></div>
+  <div class="board-foot" id="boardFoot"></div>
+</section>
+
+<script src="data.js"></script>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
