@@ -565,14 +565,15 @@ function fillLineCard(L) {
   `;
 }
 function applyVisibility() {
+  const dim = routeActive ? 0.28 : 1; // rota çizili: ağ arka plana çekilsin
   for (const L of lines) {
     const on = lineVisible(L);
     for (const rec of lineLayers[L.key] || []) {
       rec.layer.setStyle({
         weight: rec.w + (schematic ? 0.8 : 0),
         opacity: rec.under
-          ? (on ? 0.55 : 0)
-          : (on ? (L.kind === "vapur" ? 0.7 : 0.92) : (focusKey && !hiddenKinds.has(L.kind) && !growthYear ? 0.1 : 0)),
+          ? (on ? 0.55 * dim : 0)
+          : (on ? (L.kind === "vapur" ? 0.7 : 0.92) * dim : (focusKey && !hiddenKinds.has(L.kind) && !growthYear ? 0.1 : 0)),
       });
     }
   }
@@ -721,7 +722,222 @@ resEl.addEventListener("click", (ev) => {
 });
 document.addEventListener("click", (ev) => {
   if (!ev.target.closest(".search-wrap")) resEl.hidden = true;
+  if (!ev.target.closest(".route-wrap")) $("#routeResults").hidden = true;
 });
+
+// ---------- route planner (Dijkstra, aktarma + yürüme bağlantılı) ----------
+let routeGraph = null;
+let routeFromG = null, routeToG = null;
+let routeLayers = [];
+let routeActive = false;
+
+function buildGraph() {
+  const adj = new Map();
+  const add = (a, b, w, info) => { if (!adj.has(a)) adj.set(a, []); adj.get(a).push({ to: b, w, info }); };
+  const gi = new Map(groups.map((g, i) => [g, i]));
+  for (const L of lines) {
+    if (L.kind === "vapur") continue;
+    // ortalama bekleme (biniş cezası): sık hatlarda düşük
+    const boardW = L.kind === "metrobus" ? 1.5 : L.kind === "marmaray" ? 7.5 : L.live ? 4 : 6;
+    const seqs = L.live
+      ? L.dirs.map((d) => d.stops.map((e) => ({ g: e._st && e._st._g, t: e.min })))
+      : L.dirs.map((d) => {
+          const sts = d.rev ? [...L.stations].reverse() : L.stations;
+          return sts.map((s) => ({ g: s._g, t: d.rev ? (d.dur - s.cumMin) : s.cumMin }));
+        });
+    const gset = new Set();
+    for (const seq of seqs) {
+      const clean = seq.filter((x) => x.g);
+      clean.forEach((x) => gset.add(x.g));
+      for (let i = 1; i < clean.length; i++) {
+        const a = clean[i - 1], b = clean[i];
+        if (a.g === b.g) continue;
+        add(`${gi.get(a.g)}|${L.key}`, `${gi.get(b.g)}|${L.key}`, Math.max(0.5, b.t - a.t), { type: "ride", line: L, from: a.g, to: b.g });
+      }
+    }
+    for (const g of gset) {
+      add(`G${gi.get(g)}`, `${gi.get(g)}|${L.key}`, boardW, { type: "board", line: L, at: g });
+      add(`${gi.get(g)}|${L.key}`, `G${gi.get(g)}`, 0.5, { type: "alight", line: L, at: g });
+    }
+  }
+  // yakın istasyonlar arası yürüme bağlantısı (adı farklı aktarmalar için)
+  for (let i = 0; i < groups.length; i++) {
+    for (let j = i + 1; j < groups.length; j++) {
+      const d = distM([groups[i].lat, groups[i].lng], [groups[j].lat, groups[j].lng]);
+      if (d < 420) {
+        const w = Math.max(2, d / 75);
+        add(`G${i}`, `G${j}`, w, { type: "walk", from: groups[i], to: groups[j], meters: d });
+        add(`G${j}`, `G${i}`, w, { type: "walk", from: groups[j], to: groups[i], meters: d });
+      }
+    }
+  }
+  return { adj, gi };
+}
+function dijkstra(adj, src, dst) {
+  const dist = new Map([[src, 0]]);
+  const prev = new Map();
+  const done = new Set();
+  const pq = [[0, src]];
+  while (pq.length) {
+    let bi = 0;
+    for (let i = 1; i < pq.length; i++) if (pq[i][0] < pq[bi][0]) bi = i;
+    const [d, u] = pq.splice(bi, 1)[0];
+    if (done.has(u)) continue;
+    done.add(u);
+    if (u === dst) break;
+    for (const e of adj.get(u) || []) {
+      const nd = d + e.w;
+      if (nd < (dist.get(e.to) ?? Infinity)) { dist.set(e.to, nd); prev.set(e.to, { u, e }); pq.push([nd, e.to]); }
+    }
+  }
+  if (!prev.has(dst)) return null;
+  const edges = [];
+  let cur = dst;
+  while (cur !== src) { const p = prev.get(cur); if (!p) break; edges.unshift(p.e); cur = p.u; }
+  return { edges, total: dist.get(dst) };
+}
+function computeRoute(gFrom, gTo) {
+  if (!routeGraph) routeGraph = buildGraph();
+  const { adj, gi } = routeGraph;
+  const res = dijkstra(adj, `G${gi.get(gFrom)}`, `G${gi.get(gTo)}`);
+  if (!res) return null;
+  const legs = [];
+  for (const ed of res.edges) {
+    const i = ed.info;
+    if (i.type === "ride") {
+      const last = legs[legs.length - 1];
+      if (last && last.type === "ride" && last.line === i.line) { last.stops.push(i.to); last.min += ed.w; }
+      else legs.push({ type: "ride", line: i.line, from: i.from, stops: [i.to], min: ed.w, wait: 0 });
+    } else if (i.type === "board") {
+      legs.push({ type: "wait", line: i.line, min: ed.w });
+    } else if (i.type === "walk") {
+      legs.push({ type: "walk", from: i.from, to: i.to, min: ed.w, meters: i.meters });
+    }
+  }
+  const merged = [];
+  for (let i = 0; i < legs.length; i++) {
+    const l = legs[i];
+    if (l.type === "wait") {
+      if (legs[i + 1] && legs[i + 1].type === "ride" && legs[i + 1].line === l.line) legs[i + 1].wait = l.min;
+      continue;
+    }
+    merged.push(l);
+  }
+  return { legs: merged, total: res.total };
+}
+function clearRoute(full) {
+  for (const l of routeLayers) map.removeLayer(l);
+  routeLayers = [];
+  routeActive = false;
+  $("#routeResult").hidden = true;
+  $("#routeClear").hidden = true;
+  if (full) {
+    routeFromG = routeToG = null;
+    $("#routeFrom").value = ""; $("#routeTo").value = "";
+  }
+  applyVisibility();
+}
+function findDirFor(line, gFrom, gNext) {
+  for (const dir of line.dirs) {
+    if (!dir.stops) continue;
+    let iF = -1, iN = -1;
+    dir.stops.forEach((e, i) => {
+      const g = e._st && e._st._g;
+      if (g === gFrom && iF < 0) iF = i;
+      if (g === gNext && iN < 0) iN = i;
+    });
+    if (iF >= 0 && iN > iF) return { dir, stopId: dir.stops[iF].id };
+  }
+  return null;
+}
+async function showRoute() {
+  if (!routeFromG || !routeToG || routeFromG === routeToG) return;
+  clearRoute(false);
+  const r = computeRoute(routeFromG, routeToG);
+  const el = $("#routeResult");
+  el.hidden = false;
+  $("#routeClear").hidden = false;
+  if (!r) { el.innerHTML = '<p class="route-none">Rota bulunamadı — bu iki nokta ağ üzerinde bağlantısız görünüyor.</p>'; return; }
+  routeActive = true;
+  applyVisibility(); // ağı soluklaştır, rota öne çıksın
+
+  // haritaya çiz
+  const allPts = [];
+  for (const leg of r.legs) {
+    if (leg.type === "ride") {
+      const pts = [gPos(leg.from), ...leg.stops.map(gPos)];
+      routeLayers.push(L.polyline(pts, { renderer: canvas, interactive: false, color: "#ffffff", weight: 10, opacity: 0.30 }).addTo(map));
+      routeLayers.push(L.polyline(pts, { renderer: canvas, interactive: false, color: leg.line.color, weight: 5.5, opacity: 1 }).addTo(map));
+      allPts.push(...pts);
+    } else if (leg.type === "walk") {
+      const pts = [gPos(leg.from), gPos(leg.to)];
+      routeLayers.push(L.polyline(pts, { renderer: canvas, interactive: false, color: "#e8edf5", weight: 3, opacity: 0.8, dashArray: "2 7" }).addTo(map));
+      allPts.push(...pts);
+    }
+  }
+  if (allPts.length) map.flyToBounds(window.L.latLngBounds(allPts), { padding: [70, 70], duration: 0.8 });
+
+  // adım listesi
+  const rows = r.legs.map((leg) => {
+    if (leg.type === "walk") {
+      return `<div class="route-leg"><span class="route-walk">🚶</span>
+        <div><b>${leg.from.display} → ${leg.to.display}</b><small>yürüme ~${Math.round(leg.meters)} m · ${Math.round(leg.min)} dk</small></div></div>`;
+    }
+    const dest = leg.stops[leg.stops.length - 1];
+    return `<div class="route-leg">
+      <span class="line-badge" style="background:${leg.line.color};color:${pickText(leg.line.color)}">${leg.line.name || leg.line.key}</span>
+      <div><b>${leg.from.display} → ${dest.display}</b>
+      <small>${leg.stops.length} durak · ${Math.round(leg.min)} dk${leg.wait ? ` (+~${Math.round(leg.wait)} dk bekleme)` : ""}</small></div></div>`;
+  }).join("");
+  el.innerHTML = `
+    <div class="route-total"><b>~${Math.round(r.total)} dk</b><span>${routeFromG.display} → ${routeToG.display}</span></div>
+    ${rows}
+    <p class="route-live" id="routeLive"></p>
+    <p class="route-note">Süreler tarife + ortalama bekleme tahminidir.</p>`;
+
+  // ilk biniş için canlı kalkış
+  const firstRide = r.legs.find((l) => l.type === "ride");
+  if (firstRide && firstRide.line.live) {
+    const fd = findDirFor(firstRide.line, firstRide.from, firstRide.stops[0]);
+    if (fd) {
+      const raw = await apiTimeTable(fd.stopId, fd.dir.id, new Date());
+      const liveEl = $("#routeLive");
+      if (raw && raw.length && liveEl) {
+        const ep = timesToEpoch(raw, new Date());
+        const eta = ep[0] - nowEpochMin();
+        if (eta >= -0.2 && eta < 90) liveEl.innerHTML = `● İlk biniş (${firstRide.line.key}): <b>${eta < 0.75 ? "ŞİMDİ" : Math.round(eta) + " dk sonra"}</b> <span>(canlı tarife)</span>`;
+      }
+    }
+  }
+}
+function attachStationPicker(input, onPick) {
+  const res = $("#routeResults");
+  input.addEventListener("input", () => {
+    const q = norm(input.value);
+    if (q.length < 2) { res.hidden = true; return; }
+    const hits = groups.filter((g) => g.key.includes(q)).slice(0, 7);
+    res.innerHTML = hits.map((g) => `<button class="search-item" data-i="${groups.indexOf(g)}">${tipHTML(g)}</button>`).join("");
+    res.hidden = !hits.length;
+    res._active = input;
+  });
+  input.addEventListener("focus", () => { if (res._active !== input) res.hidden = true; });
+}
+$("#routeResults").addEventListener("click", (ev) => {
+  const b = ev.target.closest(".search-item");
+  if (!b) return;
+  const g = groups[+b.dataset.i];
+  const res = $("#routeResults");
+  const input = res._active;
+  res.hidden = true;
+  if (!input) return;
+  input.value = g.display;
+  if (input.id === "routeFrom") routeFromG = g; else routeToG = g;
+  if (routeFromG && routeToG) showRoute();
+  else (input.id === "routeFrom" ? $("#routeTo") : $("#routeFrom")).focus();
+});
+attachStationPicker($("#routeFrom"));
+attachStationPicker($("#routeTo"));
+$("#routeClear").addEventListener("click", () => clearRoute(true));
 
 // ---------- schematic layout (oktilineer gevşetme, 2 faz) ----------
 function buildSchematic() {
@@ -871,6 +1087,7 @@ function setMode(schem, instant) {
     }
     scaleStations();
     tick();
+    if (routeActive && routeFromG && routeToG) showRoute(); // rotayı yeni koordinatlarda yeniden çiz
     if (schem) {
       const all = [];
       for (const g of groups) if (g.slat != null) all.push([g.slat, g.slng]);
@@ -953,6 +1170,7 @@ function goHome() {
   hiddenKinds.clear();
   document.querySelectorAll(".group-label button").forEach((b) => (b.textContent = "gizle"));
   searchEl.value = ""; resEl.hidden = true;
+  clearRoute(true);
   $("#panel").classList.remove("open");
   growthAbort = true;
   if (schematic) {
@@ -1015,6 +1233,17 @@ function parseHash() {
   if (m) {
     const g = groups.find((x) => x.key === norm(m[1]));
     if (g) { map.setView(gPos(g), 14); openBoard(g); }
+  }
+  const rt = h.match(/rota=([^>&]+)>([^&]+)/);
+  if (rt) {
+    const gFind = (q) => groups.find((x) => x.key === norm(q)) || groups.find((x) => x.key.includes(norm(q)));
+    const gA = gFind(rt[1]);
+    const gB = gFind(rt[2]);
+    if (gA && gB) {
+      routeFromG = gA; routeToG = gB;
+      $("#routeFrom").value = gA.display; $("#routeTo").value = gB.display;
+      showRoute();
+    }
   }
 }
 
