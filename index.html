@@ -42,6 +42,15 @@
     <input id="search" type="search" placeholder="İstasyon ara… (ör. Yenikapı)" autocomplete="off" spellcheck="false" aria-label="İstasyon ara">
     <div class="search-results" id="searchResults" hidden></div>
   </div>
+  <div class="route-wrap" id="routeWrap">
+    <div class="group-label"><span>Rota Planla</span><button id="routeClear" hidden>temizle</button></div>
+    <div class="route-inputs">
+      <input id="routeFrom" type="search" placeholder="Nereden?" autocomplete="off" spellcheck="false" aria-label="Başlangıç istasyonu">
+      <input id="routeTo" type="search" placeholder="Nereye?" autocomplete="off" spellcheck="false" aria-label="Varış istasyonu">
+    </div>
+    <div class="search-results" id="routeResults" hidden></div>
+    <div id="routeResult" hidden></div>
+  </div>
   <div class="groups" id="groups"></div>
   <div class="alerts" id="alerts"></div>
   <div class="linecard" id="linecard" hidden></div>
