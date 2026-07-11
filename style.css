@@ -90,6 +90,15 @@ body {
 .leaflet-tile-pane { transition: opacity 0.6s ease; }
 body.schematic .leaflet-tile-pane { opacity: 0; }
 body.schematic .leaflet-control-attribution { opacity: 0.35; }
+/* şematikte zemin: blueprint / çizim masası */
+body.schematic #map {
+  background:
+    repeating-linear-gradient(0deg, rgba(126, 156, 216, 0.055) 0 1px, transparent 1px 46px),
+    repeating-linear-gradient(90deg, rgba(126, 156, 216, 0.055) 0 1px, transparent 1px 46px),
+    repeating-linear-gradient(0deg, rgba(126, 156, 216, 0.10) 0 1px, transparent 1px 230px),
+    repeating-linear-gradient(90deg, rgba(126, 156, 216, 0.10) 0 1px, transparent 1px 230px),
+    radial-gradient(130% 100% at 50% 38%, #16203a 0%, #101728 45%, #090d18 100%);
+}
 
 /* ---------- map controls (mode + stats) ---------- */
 .mapctl {
